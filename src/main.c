@@ -13,23 +13,88 @@
 
 #define NUMCARDS 40
 
+char animdash[4] = {'-','/','|','\\'};
+
 bool won_game = 0;
 unsigned int wincount = 0;
 
+int curtheme = 0;
+
+int seed = 0;
+
+bool use_automoves = true;
+
 enum cpairs {
-	CPAIR_DEFAULT = 0,
+	CPAIR_NONE = 0,
+	CPAIR_DEFAULT,
+	CPAIR_BORDER,
+	CPAIR_CARD,
 	CPAIR_RED,
 	CPAIR_GREEN,
 	CPAIR_BLUE,
-	CPAIR_MAGENTA,
+	CPAIR_FLOWER,
+	CPAIR_LABEL,
+	CPAIR_INFO,
+	CPAIR_WARNING,
+	CPAIR_ERROR,
+	CPAIR_COUNT
 };
+
+struct themeinfo {
+	int colors[CPAIR_COUNT][2];
+	int card_attr;
+	int cardborder_attr;
+	int selected_attr;
+};
+
+struct themeinfo themes[] = {
+{
+	.colors = {
+	{COLOR_WHITE,COLOR_BLACK}, //default
+	{COLOR_WHITE,COLOR_BLACK}, //border
+	{COLOR_WHITE,COLOR_BLACK}, //default card
+	{COLOR_RED,COLOR_BLACK}, //red card
+	{COLOR_GREEN,COLOR_BLACK}, //green card
+	{COLOR_BLUE,COLOR_BLACK}, //blue card
+	{COLOR_MAGENTA,COLOR_BLACK}, //flower
+	{COLOR_MAGENTA,COLOR_BLACK}, //labels
+	{COLOR_WHITE,COLOR_BLUE}, //info statusbar
+	{COLOR_WHITE,COLOR_YELLOW}, //question statusbar
+	{COLOR_WHITE,COLOR_RED}, //error statusbar
+	},
+	.card_attr = A_BOLD,
+	.cardborder_attr = 0,
+	.selected_attr = A_REVERSE,
+},
+{
+	.colors = {
+	{COLOR_WHITE,COLOR_CYAN}, //default
+	{COLOR_BLACK,COLOR_CYAN}, //border
+	{COLOR_BLACK,COLOR_WHITE}, //default card
+	{COLOR_RED,COLOR_WHITE}, //red card
+	{COLOR_GREEN,COLOR_WHITE}, //green card
+	{COLOR_BLUE,COLOR_WHITE}, //blue card
+	{COLOR_MAGENTA,COLOR_WHITE}, //flower
+	{COLOR_BLACK,COLOR_CYAN}, //labels
+	{COLOR_WHITE,COLOR_BLUE}, //info statusbar
+	{COLOR_WHITE,COLOR_YELLOW}, //question statusbar
+	{COLOR_WHITE,COLOR_RED}, //error statusbar
+	},
+	.card_attr = 0,
+	.cardborder_attr = A_BOLD,
+	.selected_attr = A_BLINK,
+},
+};
+
 #define NINES 24
 #define FIRSTDRAGON 27
 #define FLOWER 39
 #define C_EMPTY -1
 #define C_DRAGONSTACK -2
 
-int rows[15] = {
+#define ROWCOUNT 15
+
+int rows[ROWCOUNT] = {
 	C_EMPTY,C_EMPTY,C_EMPTY,C_EMPTY,C_EMPTY,C_EMPTY,C_EMPTY,C_EMPTY, //tableau
 	C_EMPTY,C_EMPTY,C_EMPTY, //free cells
 	C_EMPTY, //flower area
@@ -43,10 +108,11 @@ bool showcardnum = false;
 
 const char* cardvals = "123456789****@";
 const char* cardsuits = "OIX";
-const char* rowkeys =    "wertyuio123@890";
-const char* qwertzkeys = "wertzuio123@890";
-const char* azertykeys = "zertyuio123@890";
 
+const char* rowkeys =    NULL;
+const char* qwertykeys = "wertyuio1237890";
+const char* qwertzkeys = "wertzuio1237890";
+const char* azertykeys = "zertyuio1237890";
 
 unsigned int set_win_count(unsigned int value) {
 	char* homedir = getenv("HOME");
@@ -98,6 +164,7 @@ unsigned int get_win_count() {
 }
 
 WINDOW* screen = NULL;
+WINDOW* statusbar = NULL;
 
 struct cardll {
 	int next;
@@ -112,7 +179,7 @@ int lastcard(int row) {
 	return ccard;
 }
 
-int add_to_pile(int pile, int newcard) {
+int add_to_row(int pile, int newcard) {
 
 	int ccard = lastcard(pile);
 	if (ccard == C_EMPTY) rows[pile] = newcard; else cards[ccard].next = newcard;
@@ -135,6 +202,7 @@ int find_parent(int card) {
 	for (int i=0; i < 8; i++) {
 		int curcard = rows[i];
 		if (curcard == card) return C_EMPTY;
+		if (curcard == C_EMPTY) continue;  // if the row is empty, skip it
 		while (cards[curcard].next >= 0) {
 			if(cards[curcard].next == card) return curcard;
 			curcard = cards[curcard].next;
@@ -217,13 +285,23 @@ int clear_row(int row, int offset, int num) {
 
 void draw_card(int ccard, int xpos, int ypos) {
 
-	if ((selcard == ccard) && (selcard != C_EMPTY))
-		wattron(screen, A_REVERSE);
-	if (ccard == C_EMPTY) wattron(screen, COLOR_PAIR(CPAIR_MAGENTA));
+	bool selected = ((selcard != C_EMPTY) && (selcard == ccard));
+	int suit_attr = (themes[curtheme].card_attr | COLOR_PAIR( ((ccard == FLOWER) || (ccard == C_DRAGONSTACK)) ? CPAIR_FLOWER : CPAIR_RED+(ccard%3)) );
+
+	//draw the border
+
+	if (selected) wattron(screen, themes[curtheme].selected_attr | suit_attr);
+	else if (ccard == C_EMPTY) wattron(screen, COLOR_PAIR(CPAIR_LABEL));
+	else wattron(screen,themes[curtheme].cardborder_attr | COLOR_PAIR(CPAIR_CARD));
 	mvwprintw(screen,ypos,xpos,"[   ]");
-	if (ccard == C_EMPTY) wattroff(screen, COLOR_PAIR(CPAIR_MAGENTA));
+	if (ccard == C_EMPTY) wattroff(screen, COLOR_PAIR(CPAIR_LABEL));
+	else if (selected) wattroff(screen, themes[curtheme].selected_attr | suit_attr);
+	else wattroff(screen,themes[curtheme].cardborder_attr | COLOR_PAIR(CPAIR_CARD));
+	
+	//draw the card itself
+
 	if (ccard == C_EMPTY) return;
-	wattron(screen,A_BOLD | COLOR_PAIR( ((ccard == FLOWER) || (ccard == C_DRAGONSTACK)) ? CPAIR_MAGENTA : 1+(ccard%3) ));
+	wattron(screen, (selected ? themes[curtheme].selected_attr : 0) | suit_attr);
 
 	if (showcardnum) {
 		mvwprintw(screen,ypos,xpos+1,"%3d",ccard);
@@ -239,10 +317,9 @@ void draw_card(int ccard, int xpos, int ypos) {
 		mvwprintw(screen,ypos,xpos+1," @ ");
 	}
 	}
-	wattroff(screen,A_BOLD | COLOR_PAIR(1+(ccard%3)));
+	
+	wattroff(screen, (selected ? themes[curtheme].selected_attr : 0) | suit_attr);
 
-	if ((selcard == ccard) && (selcard != C_EMPTY))
-		wattroff(screen, A_REVERSE);
 }
 
 int find_freecell() {
@@ -282,8 +359,9 @@ int exposed_dragons() {
 int remove_exposed_dragons(int suit) {
 
 	for (int i=0; i < 11; i++) {
-		if ((lastcard(i) >= FIRSTDRAGON) && (lastcard(i) < FLOWER) && ((lastcard(i)%3 == suit)) ) {
-			remove_card(lastcard(i));
+		int lc = lastcard(i);
+		if ((lc >= FIRSTDRAGON) && (lc < FLOWER) && ((lc%3) == suit) ) {
+			remove_card(lc);
 			clear_row(i,stacklen(rows[i]),1);
 		}
 	}
@@ -296,28 +374,29 @@ void draw_cards() {
 	for (int i=0; i < 3; i++) {
 		draw_card(rows[8+i], 2 + i*7, 2);
 		draw_card(rows[12+i], 58 + i*7, 2);
-		wattron(screen, COLOR_PAIR(CPAIR_MAGENTA));
+		wattron(screen, COLOR_PAIR(CPAIR_LABEL));
 		mvwaddch(screen, 1, 4 + i*7, rowkeys[8+i]);
+		mvwaddch(screen, 1, 40, rowkeys[11]);
 		mvwaddch(screen, 1, 60 + i*7, rowkeys[12+i]);
-		wattroff(screen, COLOR_PAIR(CPAIR_MAGENTA));
+		wattroff(screen, COLOR_PAIR(CPAIR_LABEL));
 	}
 	draw_card(rows[11], 38, 2);
 
 	int r = exposed_dragons();
 	for (int i=0; i < 3; i++) {
-		wattron(screen, COLOR_PAIR(CPAIR_MAGENTA));
+		wattron(screen, COLOR_PAIR(CPAIR_LABEL));
 		mvwprintw(screen, 1, 23 + (i*4), "%d", 4 + i);
-		wattroff(screen, COLOR_PAIR(CPAIR_MAGENTA));
+		wattroff(screen, COLOR_PAIR(CPAIR_LABEL));
 		
-		wattron(screen, ( (r & (1 << i)) ? A_BOLD : 0 ) | COLOR_PAIR(i+1));
+		wattron(screen, ( (r & (1 << i)) ? A_BOLD : 0 ) | COLOR_PAIR(i+CPAIR_RED));
 		mvwprintw(screen, 2, 22 + (i*4), "(%c)", (r & (1 << i)) ? cardsuits[i] : ' ');
-		wattroff(screen, ( (r & (1 << i)) ? A_BOLD : 0 ) | COLOR_PAIR(i+1));
+		wattroff(screen, ( (r & (1 << i)) ? A_BOLD : 0 ) | COLOR_PAIR(i+CPAIR_RED));
 	}
 
 	for (int i=0; i < 8; i++) {
-		wattron(screen, COLOR_PAIR(CPAIR_MAGENTA));
+		wattron(screen, COLOR_PAIR(CPAIR_LABEL));
 		mvwaddch(screen, 4, 8 + i*9, rowkeys[i]);
-		wattroff(screen, COLOR_PAIR(CPAIR_MAGENTA));
+		wattroff(screen, COLOR_PAIR(CPAIR_LABEL));
 		int ccard = rows[i];
 		int ypos = 0;
 		do {
@@ -329,15 +408,15 @@ void draw_cards() {
 
 	if ((rows[8] == -2) && (rows[9] == -2) && (rows[10] == -2) && (rows[12] >= NINES) && (rows[13] >= NINES) && (rows[14] >= NINES)) {
 
-			wattron(screen,A_BOLD | COLOR_PAIR(CPAIR_MAGENTA));
+			wattron(screen,A_BOLD | COLOR_PAIR(CPAIR_LABEL));
 			mvwprintw(screen,13,32,"Y O U   W I N !");
-			if (!won_game) { wincount++; set_win_count(wincount); won_game = true; }
-			wattron(screen,A_BOLD | COLOR_PAIR(CPAIR_MAGENTA));
+			if (!won_game) { if (seed >= 0) { wincount++; set_win_count(wincount); } won_game = true; }
+			wattron(screen,A_BOLD | COLOR_PAIR(CPAIR_LABEL));
 			}
  
-	wattron(screen,(won_game ? A_BOLD : 0) | COLOR_PAIR(CPAIR_MAGENTA));
-	mvwprintw(screen,22,68,"%5d win%c",wincount, ((wincount%10 != 1) || (wincount == 11)) ? 's' : ' ');
-	wattroff(screen,(won_game ? A_BOLD : 0) | COLOR_PAIR(CPAIR_MAGENTA));
+	wattron(screen,(won_game ? A_BOLD : 0) | COLOR_PAIR(CPAIR_LABEL));
+	mvwprintw(screen,21,68,"%5d win%c",wincount, ((wincount%10 != 1) || (wincount == 11)) ? 's' : ' ');
+	wattroff(screen,(won_game ? A_BOLD : 0) | COLOR_PAIR(CPAIR_LABEL));
 
 	wrefresh(screen);
 }
@@ -395,18 +474,124 @@ int auto_move(void) {
 	return false;
 }
 
+void update_status (const char* text, int color) {
+	wattron(statusbar, A_BOLD | COLOR_PAIR(color));
+	wbkgd(statusbar, A_BOLD | COLOR_PAIR(color));
+	werase(statusbar);
+	mvwaddstr(statusbar, 0, 0, text);
+	wattroff(statusbar, A_BOLD | COLOR_PAIR(color));
+	wrefresh(statusbar);	
+}
 
+bool ask_string (const char* prompt, int color, char* output, unsigned int o_sz) {
+	wattron(statusbar, A_BOLD | COLOR_PAIR(color));
+	werase(statusbar);
+	wbkgd(statusbar, A_BOLD | COLOR_PAIR(color));
+	mvwprintw(statusbar, 0, 0, "%s: >", prompt);
+	echo();		
+	int r = wgetnstr(statusbar,output,o_sz);
+	noecho();
+	wattroff(statusbar, A_BOLD | COLOR_PAIR(color));	
 
-int main(int argc, char** argv) {
+	if (r == OK) return true; else return false;
+}
 
+bool ask_integer (const char* prompt, int color, int* output) {
+
+	char temp[21];
+	temp[0] = 0;
+
+	while (true) {
+
+	errno = 0;
+	int str = ask_string(prompt,color,temp,20); 	
+	
+	if (!str) return false;
+
+	char* endptr = temp;
+	int num = strtol(temp,&endptr,0);
+	if (strlen(temp) == 0) return false;
+
+	if ( (errno != 0) || ((endptr - temp) < strlen(temp)) ) { beep(); } else { *output = num; return true; }
+
+	}
+}
+
+bool yes_or_no (const char* text, int color) {
+	
+	wattron(statusbar, A_BOLD | COLOR_PAIR(color));
+	werase(statusbar);
+	wbkgd(statusbar, A_BOLD | COLOR_PAIR(color));
+	mvwprintw(statusbar, 0, 0, "%s (y/n)? ", text);
+	wattroff(statusbar, A_BOLD | COLOR_PAIR(color));	
+	int c;
+	while (true) {
+		c = wgetch(statusbar);
+		if (tolower(c) == 'y') { update_status("OK.", CPAIR_INFO); return true; }
+		if (tolower(c) == 'n') { update_status("OK.", CPAIR_INFO); return false; }
+	}
+}
+
+int new_seed (void) {
+	unsigned int t = time(NULL);
+	return rand_r(&t);
+}
+
+int init_board (int seed) {
+	
+	int oldstacklens[ROWCOUNT];
+	for (int i=0; i < ROWCOUNT; i++) oldstacklens[i] = stacklen(rows[i]);
+	
 	for (int i=0; i<40; i++) cards[i].next = C_EMPTY;
 	for (int i=0; i<15; i++) rows[i] = C_EMPTY;
 
+	srand(seed);
+	int randcards[NUMCARDS];
+	for (int i=0; i<40; i++) randcards[i] = 39-i;
+	
+	if (seed != -1) {
+	for (int i=0; i<39; i++) {
+		int j = i + (rand() % (40-i));
+		int rc = randcards[i];
+		randcards[i] = randcards[j];
+		randcards[j] = rc;
+	}
+	}
+
+	for (int i=0; i < 40; i++) {
+		add_to_row(i%8, randcards[i]);
+	}
+
+	for (int i=0; i < ROWCOUNT; i++) {
+		if (stacklen(rows[i]) < oldstacklens[i]) clear_row(i, stacklen(rows[i]), oldstacklens[i] - stacklen(rows[i]));
+	}
+
+	return 0;
+}
+
+int draw_initial_screen(void) {
+	wbkgdset(screen, COLOR_PAIR(CPAIR_DEFAULT));
+	wclear(screen);
+	wattron(screen, COLOR_PAIR(CPAIR_BORDER));
+	box(screen,0,0);
+	wattroff(screen, COLOR_PAIR(CPAIR_BORDER));
+	update_status ("Welcome to szsol!", CPAIR_INFO);
+	wattron(screen,COLOR_PAIR(CPAIR_LABEL));
+	mvwprintw(screen,21,2,"Game #%d",seed);
+	wattroff(screen,COLOR_PAIR(CPAIR_LABEL));
+	wrefresh(screen);
+	return 0;
+}
+
+int main(int argc, char** argv) {
+
 	int opt = -1;
+
+	seed = new_seed();
 
 	//int dbgmode = 0;
 
-	while ((opt = getopt(argc, argv, "dvDF")) != -1) {
+	while ((opt = getopt(argc, argv, "dvn:t:DF")) != -1) {
 		switch (opt) {
 			case 'd':
 				dbgmode = 1;
@@ -418,6 +603,13 @@ int main(int argc, char** argv) {
 				break;
 			case 'F':
 				rowkeys = azertykeys;
+				break;
+			case 'n':
+				seed = atoi(optarg);
+				break;
+			case 't':
+				curtheme = atoi(optarg);
+				if ( (curtheme < 0) || (curtheme >= ( (sizeof themes) / (sizeof themes[0]) ) ) ) { curtheme = 0; }
 				break;
 			case 'v':
 				printf( 
@@ -431,8 +623,11 @@ int main(int argc, char** argv) {
 			case '?':
 			default: /* '?' */
 				fprintf(stderr, 
-"Usage: %s [-d] [-v]\n"
+"Usage: %s [-d] [-D | -F] [-n number] [-v]\n"
 "\t-d : Debug mode.\n"
+"\t-D : Use the QWERTZ keyboard layout.\n"
+"\t-F : Use the AZERTY keyboard layout.\n"
+"\t-n [number] : Start with a predetermined card layout based on a seed number. \n"
 "\t-v : Version / credits.\n"
 "\n"
 "How to play:\n"
@@ -458,6 +653,8 @@ int main(int argc, char** argv) {
 		}
 	}
 
+	if (rowkeys == NULL) rowkeys = qwertykeys;
+
 	initscr();
 #ifdef NCURSES_VERSION
 	set_escdelay(100);
@@ -466,39 +663,56 @@ int main(int argc, char** argv) {
 	noecho();
 	start_color();
 
-	init_pair(CPAIR_BLUE,COLOR_BLUE,COLOR_BLACK);
-	init_pair(CPAIR_RED,COLOR_RED,COLOR_BLACK);
-	init_pair(CPAIR_GREEN,COLOR_GREEN,COLOR_BLACK);
-	init_pair(CPAIR_MAGENTA,COLOR_MAGENTA,COLOR_BLACK);
+	for (int i=0; i < (CPAIR_COUNT-1); i++) {
+		init_pair(i+1,themes[curtheme].colors[i][0],themes[curtheme].colors[i][1]);
+	}
+	
+	if (LINES < 24 || COLS < 80) {
+		endwin();
+		fprintf(stderr, 
+			"Terminal window is too small.\n"
+			"Minimum terminal window size: 80x24.\n");
+		return -1;
+	}
 
-	screen = newwin(24,80,(LINES-24)/2,(COLS-80) / 2);
+	screen = newwin(23,80,(LINES-24)/2,(COLS-80) / 2);
+	statusbar = newwin(1,80,(LINES-24)/2 + 23, (COLS-80) / 2);
+	
 	keypad(screen,true);
-	box(screen,0,0);
-	wrefresh(screen);
 
 	wincount = get_win_count();
+	
+	for (int i=0; i<40; i++) cards[i].next = C_EMPTY;
+	for (int i=0; i<15; i++) rows[i] = C_EMPTY;
+	
+	//make sure init_board always sees empty rows on the first run.
 
-	srand(time(NULL));
-	int randcards[NUMCARDS];
-	for (int i=0; i<40; i++) randcards[i] = 39-i;
-	for (int i=0; i<39; i++) {
-		int j = i + (rand() % (40-i));
-		int rc = randcards[i];
-		randcards[i] = randcards[j];
-		randcards[j] = rc;
-	}
-
-	for (int i=0; i < 40; i++) {
-		add_to_pile(i%8, randcards[i]);
-	}
+	init_board(seed);
 
 	int c = 0;
 
 	int selrow = -1;
 	int selpos = -1;
 	
+	draw_initial_screen();
+	draw_cards();
+
+	bool loop = true;
+
+	int automoves = 0;
+	
 	do {
-		if ((selrow == -1) && (selpos == -1) && (selcard == C_EMPTY)) while (auto_move()) {};
+		if ((selrow == -1) && (selpos == -1) && (selcard == C_EMPTY)) {
+			
+			while (use_automoves && auto_move()) { 
+			automoves++;
+			mvwaddch(screen,1,COLS-2, animdash[automoves % 4]);
+			draw_cards();
+			if (automoves > 1) usleep(250000);
+			};
+		}
+		automoves = 0;
+		mvwaddch(screen,1,COLS-2,' ');
 		draw_cards();
 		c = wgetch(screen);
 
@@ -509,19 +723,20 @@ int main(int argc, char** argv) {
 				//go up in the same row
 
 				int newcard = get_card(selrow,selpos - 1,&selpos);
-				if (card_can_be_stacked(newcard,selcard)) selcard = newcard; else {beep(); selrow = -1; selpos = -1; selcard = C_EMPTY;}
+				if (card_can_be_stacked(newcard,selcard)) selcard = newcard; else { update_status("Can't go further in this row.", CPAIR_ERROR); beep(); selrow = -1; selpos = -1; selcard = C_EMPTY;}
 			} else {
 				//pick a different row
 				int newcard = get_card(newrow, -1, &selpos);
 				if (selrow != -1) {
 					//move card into that row
 					bool r = move_card(selrow,selcard,newrow);
-					if (!r) beep();
-					if (r) clear_row(selrow,stacklen(rows[selrow]),stacklen(selcard));
+					if (!r) { update_status("Can't move the cards into this row.", CPAIR_ERROR); beep(); }
+					if (r) { update_status("OK.", CPAIR_INFO); clear_row(selrow,stacklen(rows[selrow]),stacklen(selcard)); }
 					selrow = -1;
 					selpos = -1;
 					selcard = C_EMPTY;
 				} else if (newcard == C_EMPTY) {
+					update_status("Can't select an empty row.", CPAIR_ERROR);
 					beep();
 				} else {
 					selrow = newrow;
@@ -533,7 +748,9 @@ int main(int argc, char** argv) {
 			int newcard = get_card(newrow, -1, &selpos);
 			int nextcard = C_EMPTY;
 
-			while ((selpos > 0) && ((nextcard = get_card(newrow, selpos-1,&selpos)) != C_EMPTY) && (card_can_be_stacked(nextcard,newcard)) ) newcard = nextcard;
+			int newpos = selpos;
+
+			while ((selpos > 0) && ((nextcard = get_card(newrow, newpos-1,&newpos)) != C_EMPTY) && (card_can_be_stacked(nextcard,newcard)) ) { newcard = nextcard; selpos = newpos; }
 
 			selrow = newrow;
 			selcard = newcard;
@@ -542,17 +759,56 @@ int main(int argc, char** argv) {
 		if ((c >= '4') && (c <= '6')) {
 			int r = exposed_dragons();
 			int suit = c - '4';
-			if (r & (1 << suit)) remove_exposed_dragons(suit);
+			if (r & (1 << suit)) {
+				remove_exposed_dragons(suit);
+				update_status ("Dragons removed.", CPAIR_INFO);
+			} else {
+				update_status ("Can't remove these dragons yet.", CPAIR_ERROR);
+			}
 			selrow = -1; selpos = -1; selcard = C_EMPTY;
 		}
 
 		if (c == ' ') {
+			update_status ("OK.", CPAIR_INFO);
 			selrow = -1; selpos = -1; selcard = -1;
 		}
 
 		if ((c == 'n') && (dbgmode == 1)) showcardnum = !showcardnum;
 
-	} while (c != 'Q' && c != 27);	
+		if ((c == 'Q') || (c == 27)) { if (yes_or_no("Quit?", CPAIR_WARNING)) loop = false; } 
+		
+		if ( ((rowkeys == qwertykeys) && (c == 'z')) || (c == KEY_F(3)) ) {
+				
+			if (yes_or_no("Restart this game?", CPAIR_WARNING)) { 
+				selrow = -1; selpos = -1; selcard = -1; 
+				init_board(seed); 
+				draw_initial_screen(); 
+			if (won_game) update_status("Winning this exact game once again won't increase your win count.", CPAIR_WARNING); } 
+		}
+		
+		if ( (c == 'n') || (c == KEY_F(2)) ) {
+			if (yes_or_no("Start a new game?", CPAIR_WARNING)) { 
+				won_game = 0; seed = new_seed(); selrow = -1; selpos = -1; selcard = -1; init_board(seed); 
+				draw_initial_screen();
+			}
+		}
+
+		if ( (c == 'N') || (c == KEY_F(4)) ) {
+			if (ask_integer("Input game # for a new game or empty string to cancel", CPAIR_WARNING, &seed)) {
+			selrow = -1; selpos = -1; selcard = -1;
+			init_board(seed);
+			draw_initial_screen();
+			} else update_status("Continuing existing game.", CPAIR_INFO);	
+		}
+
+		if ( ((rowkeys == qwertykeys) && ((c == 'a') || (c == 'A')) ) || (c == KEY_F(5)) ) {
+			use_automoves = !use_automoves;
+			update_status ( use_automoves ?
+				"Automatic moves enabled." :
+				"Automatic moves disabled.", CPAIR_INFO);
+		}
+
+	} while (loop);	
 
 	endwin();
 	return 0;
